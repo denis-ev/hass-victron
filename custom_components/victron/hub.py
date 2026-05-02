@@ -197,6 +197,45 @@ class VictronHub:
             return False
         return None
 
+    def revalidate_register_set(self, stored: dict) -> dict:
+        """Re-probe a previously stored register set and prune blocks no longer supported.
+
+        Uses the same multi-read consensus probe as ``determine_present_devices``:
+        a block is dropped only if every successful read returns undecodable
+        TextReadEntityType values. Blocks that error on every attempt (e.g.
+        device temporarily unreachable) are kept in place -- this revalidation
+        runs at HA startup and a transient outage must not wipe a working
+        configuration.
+
+        Existing config entries can carry register blocks that were detected
+        before ``determine_present_devices`` learned to validate
+        TextReadEntityType contents; this lets ``async_setup_entry`` heal them
+        at startup without requiring users to re-add the integration.
+        """
+        pruned: dict = {}
+        for unit, blocks in stored.items():
+            kept = []
+            for key in blocks:
+                register_definition = register_info_dict.get(key)
+                if register_definition is None:
+                    # Block no longer exists in the integration; drop it.
+                    continue
+                status = self._probe_block_supported(unit, register_definition)
+                if status is False:
+                    _LOGGER.info(
+                        "Pruning register block %s on unit %s: text register "
+                        "no longer decodes against its enum across all probe "
+                        "attempts",
+                        key,
+                        unit,
+                    )
+                    continue
+                # status is True (supported) or None (transient error) -- keep.
+                kept.append(key)
+            if kept:
+                pruned[unit] = kept
+        return pruned
+
     def _block_has_undecodable_text(
         self, register_definition: OrderedDict, result, first_address: int
     ) -> bool:
