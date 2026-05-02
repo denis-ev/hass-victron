@@ -94,7 +94,7 @@ class VictronHub:
     def read_holding_registers(self, unit, address, count):
         """Read holding registers."""
         slave = int(unit) if unit else 1
-        _LOGGER.info("Reading unit %s address %s count %s", unit, address, count)
+        _LOGGER.debug("Reading unit %s address %s count %s", unit, address, count)
         return self._client.read_holding_registers(
             address=address, count=count, device_id=slave
         )
@@ -135,29 +135,27 @@ class VictronHub:
                     continue
 
                 try:
-                    address = self.get_first_register_id(register_definition)
-                    count = self.calculate_register_count(register_definition)
-                    result = self.read_holding_registers(unit, address, count)
-                    if result.isError():
-                        _LOGGER.debug(
-                            "result is error for unit: %s address: %s count: %s",
-                            unit,
-                            address,
-                            count,
-                        )
-                    elif self._block_has_undecodable_text(
-                        register_definition, result, address
-                    ):
-                        _LOGGER.debug(
-                            "register set %s on unit %s returned an undecodable "
-                            "text value; treating as not present",
-                            key,
-                            unit,
-                        )
-                    else:
-                        working_registers.append(key)
+                    status = self._probe_block_supported(unit, register_definition)
                 except HomeAssistantError as e:
                     _LOGGER.error(e)
+                    continue
+
+                if status is True:
+                    working_registers.append(key)
+                elif status is False:
+                    _LOGGER.debug(
+                        "register set %s on unit %s returned undecodable text "
+                        "values across all probe attempts; treating as not present",
+                        key,
+                        unit,
+                    )
+                else:
+                    _LOGGER.debug(
+                        "register set %s on unit %s did not respond on any "
+                        "probe attempt; treating as not present",
+                        key,
+                        unit,
+                    )
 
             if len(working_registers) > 0:
                 valid_devices[unit] = working_registers
@@ -166,6 +164,39 @@ class VictronHub:
 
         return valid_devices
 
+    def _probe_block_supported(
+        self, unit, register_definition: OrderedDict, attempts: int = 3
+    ):
+        """Probe a register block multiple times. Tristate result.
+
+        Returns ``True`` if at least one read returned valid (decodable) data,
+        ``False`` if every successful read had undecodable TextReadEntityType
+        values, and ``None`` if every attempt errored or raised. Multi-read
+        consensus prevents a single transient bad value (e.g. a 0xFFFF sentinel
+        emitted briefly during a device reset) from permanently marking a block
+        as not-present, while still pruning blocks that consistently return
+        garbage for registers the hardware does not actually populate.
+        """
+        address = self.get_first_register_id(register_definition)
+        count = self.calculate_register_count(register_definition)
+        saw_undecodable = False
+        for _ in range(attempts):
+            try:
+                result = self.read_holding_registers(unit, address, count)
+            except Exception:  # noqa: BLE001 — bounded retry; transient errors are expected
+                continue
+            if result.isError():
+                continue
+            if self._block_has_undecodable_text(
+                register_definition, result, address
+            ):
+                saw_undecodable = True
+                continue
+            return True
+        if saw_undecodable:
+            return False
+        return None
+
     def _block_has_undecodable_text(
         self, register_definition: OrderedDict, result, first_address: int
     ) -> bool:
@@ -173,8 +204,7 @@ class VictronHub:
 
         Some Victron devices return well-formed Modbus responses with garbage values
         for registers their hardware does not actually populate (e.g. battery_balancer_status
-        on a BMS without a Battery Balancer). Without this check the block is marked
-        present and the resulting entity logs a decode error every poll cycle.
+        on a BMS without a Battery Balancer).
         """
         for info in register_definition.values():
             if not isinstance(info.entityType, TextReadEntityType):
