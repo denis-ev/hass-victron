@@ -15,6 +15,7 @@ from .const import (
     INT32,
     INT64,
     STRING,
+    TextReadEntityType,
     UINT16,
     UINT32,
     UINT64,
@@ -144,6 +145,15 @@ class VictronHub:
                             address,
                             count,
                         )
+                    elif self._block_has_undecodable_text(
+                        register_definition, result, address
+                    ):
+                        _LOGGER.debug(
+                            "register set %s on unit %s returned an undecodable "
+                            "text value; treating as not present",
+                            key,
+                            unit,
+                        )
                     else:
                         working_registers.append(key)
                 except HomeAssistantError as e:
@@ -155,3 +165,24 @@ class VictronHub:
                 _LOGGER.debug("no registers found for unit: %s", unit)
 
         return valid_devices
+
+    def _block_has_undecodable_text(
+        self, register_definition: OrderedDict, result, first_address: int
+    ) -> bool:
+        """Return True if any TextReadEntityType register in the block decodes outside its enum.
+
+        Some Victron devices return well-formed Modbus responses with garbage values
+        for registers their hardware does not actually populate (e.g. battery_balancer_status
+        on a BMS without a Battery Balancer). Without this check the block is marked
+        present and the resulting entity logs a decode error every poll cycle.
+        """
+        for info in register_definition.values():
+            if not isinstance(info.entityType, TextReadEntityType):
+                continue
+            offset = info.register - first_address
+            if offset < 0 or offset >= len(result.registers):
+                continue
+            valid_values = {item.value for item in info.entityType.decodeEnum}
+            if result.registers[offset] not in valid_values:
+                return True
+        return False
