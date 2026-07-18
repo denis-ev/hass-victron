@@ -163,6 +163,15 @@ class RegisterInfo:
         """Initialize the register info."""
         self.register = register
         self.dataType = dataType
+        if isinstance(unit, EntityType):
+            # An EntityType was passed positionally into the unit slot.
+            # Recover it as the entityType so the unit never ends up as a
+            # non-serializable object, which crashes the HA websocket and
+            # aborts every recorder StatisticsTask run (issue #444).
+            entityType = unit
+            unit = None
+        elif not isinstance(unit, str):
+            unit = None
         self.unit = (
             unit
             if not isinstance(entityType, TextReadEntityType)
@@ -722,10 +731,10 @@ class microgrid_error(Enum):
 
 vebus_registers_4 = {
     "vebus_microgrid_heartbeat": RegisterInfo(
-        230, UINT16, 1, entityType=ButtonWriteType()
+        register=230, dataType=UINT16, entityType=ButtonWriteType()
     ),
     "vebus_microgrid_error": RegisterInfo(
-        231, UINT16, TextReadEntityType(microgrid_error)
+        register=231, dataType=UINT16, entityType=TextReadEntityType(microgrid_error)
     ),
 }
 
