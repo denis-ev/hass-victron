@@ -2638,7 +2638,11 @@ dcsystem_registers = {
         4401, INT16, UnitOfElectricCurrent.AMPERE, 10
     ),
     "dcsystem_starter_voltage": RegisterInfo(
-        4402, UINT16, UnitOfElectricPotential.VOLT, 100
+        # scale 10, not 100 - matches the same specsheet mismatch already
+        # fixed for dcsource_starter_voltage (#27); confirmed against raw
+        # register data in #451 (raw 243 -> /10 = 24.3V, matches the
+        # SmartShunt's own reading; /100 = 2.43V does not).
+        4402, UINT16, UnitOfElectricPotential.VOLT, 10
     ),
     "dcsystem_temperature": RegisterInfo(4403, INT16, UnitOfTemperature.CELSIUS, 10),
     "dcsystem_history_energyout": RegisterInfo(

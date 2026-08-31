@@ -199,9 +199,18 @@ class VictronSensor(CoordinatorEntity, SensorEntity):
                             data
                         ).name.split("_DUPLICATE")[0]
                     else:
-                        self._attr_native_value = "NONDECODABLE"
-                        _LOGGER.error(
-                            "The reported value %s for entity %s isn't a decodable value. Please report this error to the integrations maintainer",
+                        # #430: an out-of-enum value here is the device
+                        # reporting a code this integration doesn't know
+                        # about yet (e.g. an undocumented/reserved value),
+                        # not a real error condition on every poll. A
+                        # string sentinel masquerading as a valid enum
+                        # state also confuses the recorder/statistics
+                        # engine for entities with a device_class. Treat
+                        # it like the 0xFFFF case above: unknown, logged
+                        # at debug instead of spamming ERROR.
+                        self._attr_native_value = None
+                        _LOGGER.debug(
+                            "The reported value %s for entity %s isn't a decodable value; treating as unknown",
                             data,
                             self._attr_name,
                         )

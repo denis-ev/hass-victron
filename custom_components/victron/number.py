@@ -243,11 +243,19 @@ class VictronNumber(NumberEntity):
 
         self.data_key = str(self.description.slave) + "." + str(self.description.key)
 
-        self._attr_native_value = self.description.value_fn(
-            self.coordinator.processed_data(),
-            self.description.slave,
-            self.description.key,
-        )
+        try:
+            self._attr_native_value = self.description.value_fn(
+                self.coordinator.processed_data(),
+                self.description.slave,
+                self.description.key,
+            )
+        except KeyError:
+            # First poll for this slave hasn't completed yet (e.g. a newly
+            # appeared device, or setup racing the coordinator's first
+            # refresh) - #450: this used to crash the whole number platform
+            # setup instead of just this one entity. Start unknown; the
+            # first successful poll populates it via the coordinator.
+            self._attr_native_value = None
 
         self._hub_id = coordinator.config_entry.entry_id
         self._hub_name = coordinator.config_entry.title
