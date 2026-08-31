@@ -16,7 +16,7 @@ jobs:
       contents: write
     steps:
       - name: ⤵️ Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: 🧹 Delete previous dev pre-releases
         env:
@@ -36,7 +36,7 @@ jobs:
           echo "version=v0.0.0-dev.$(date -u +%Y%m%d%H%M).$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: 🚧 Create pre-release
-        uses: softprops/action-gh-release@v2.2.1
+        uses: softprops/action-gh-release@v3.0.3
         with:
           tag_name: ${{ steps.version.outputs.version }}
           name: Dev build ${{ steps.version.outputs.version }}
