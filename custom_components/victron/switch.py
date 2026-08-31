@@ -16,6 +16,7 @@ from homeassistant.core import HassJob, HomeAssistant
 from homeassistant.helpers import entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import slugify
 
 from .base import VictronWriteBaseEntityDescription
 from .const import CONF_ADVANCED_OPTIONS, DOMAIN, SwitchWriteType, register_info_dict
@@ -90,13 +91,19 @@ class VictronSwitch(CoordinatorEntity, SwitchEntity):
         self._attr_name = f"{description.name}"
         self.data_key = str(self.description.slave) + "." + str(self.description.key)
 
-        self._attr_unique_id = f"{description.slave}_{self.description.key}"
+        self._hub_id = coordinator.config_entry.entry_id
+        self._hub_name = coordinator.config_entry.title
+        hub_slug = slugify(self._hub_name)
+
+        self._attr_unique_id = (
+            f"{self._hub_id}_{description.slave}_{self.description.key}"
+        )
         if description.slave not in (100, 225):
             self.entity_id = (
-                f"{SWITCH_DOMAIN}.{DOMAIN}_{self.description.key}_{description.slave}".lower()
+                f"{SWITCH_DOMAIN}.{DOMAIN}_{hub_slug}_{self.description.key}_{description.slave}".lower()
             )
         else:
-            self.entity_id = f"{SWITCH_DOMAIN}.{DOMAIN}_{self.description.key}".lower()
+            self.entity_id = f"{SWITCH_DOMAIN}.{DOMAIN}_{hub_slug}_{self.description.key}".lower()
 
         self._update_job = HassJob(self.async_schedule_update_ha_state)
         self._unsub_update = None
@@ -136,8 +143,9 @@ class VictronSwitch(CoordinatorEntity, SwitchEntity):
     def device_info(self) -> entity.DeviceInfo:
         """Return the device info."""
         return entity.DeviceInfo(
-            identifiers={(DOMAIN, self.unique_id.split("_")[0])},
-            name=self.unique_id.split("_")[1],
-            model=self.unique_id.split("_")[0],
+            identifiers={(DOMAIN, f"{self._hub_id}_{self.description.slave}")},
+            name=f"{self._hub_name} {self.description.slave}",
+            model=str(self.description.slave),
             manufacturer="victron",
+            via_device=(DOMAIN, self._hub_id),
         )

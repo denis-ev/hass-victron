@@ -27,6 +27,7 @@ from homeassistant.core import HassJob, HomeAssistant, callback
 from homeassistant.helpers import entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import slugify
 
 from .base import VictronBaseEntityDescription
 from .const import (
@@ -155,13 +156,19 @@ class VictronSensor(CoordinatorEntity, SensorEntity):
         self._attr_state_class = description.state_class
         self.entity_type = description.entity_type
 
-        self._attr_unique_id = f"{description.slave}_{self.description.key}"
+        self._hub_id = coordinator.config_entry.entry_id
+        self._hub_name = coordinator.config_entry.title
+        hub_slug = slugify(self._hub_name)
+
+        self._attr_unique_id = (
+            f"{self._hub_id}_{description.slave}_{self.description.key}"
+        )
         if description.slave not in (0, 100, 225):
             self.entity_id = (
-                f"{SENSOR_DOMAIN}.{DOMAIN}{self.description.key}{description.slave}".lower()
+                f"{SENSOR_DOMAIN}.{DOMAIN}_{hub_slug}_{self.description.key}{description.slave}".lower()
             )
         else:
-            self.entity_id = f"{SENSOR_DOMAIN}.{DOMAIN}_{self.description.key}".lower()
+            self.entity_id = f"{SENSOR_DOMAIN}.{DOMAIN}_{hub_slug}_{self.description.key}".lower()
 
         self._update_job = HassJob(self.async_schedule_update_ha_state)
         self._unsub_update = None
@@ -211,8 +218,9 @@ class VictronSensor(CoordinatorEntity, SensorEntity):
     def device_info(self) -> entity.DeviceInfo:
         """Return the device info."""
         return entity.DeviceInfo(
-            identifiers={(DOMAIN, self.unique_id.split("_")[0])},
-            name=self.unique_id.split("_")[1],
-            model=self.unique_id.split("_")[0],
+            identifiers={(DOMAIN, f"{self._hub_id}_{self.description.slave}")},
+            name=f"{self._hub_name} {self.description.slave}",
+            model=str(self.description.slave),
             manufacturer="victron",  # to be dynamically set for gavazzi and redflow
+            via_device=(DOMAIN, self._hub_id),
         )

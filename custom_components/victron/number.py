@@ -22,6 +22,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import slugify
 
 from .base import VictronWriteBaseEntityDescription
 from .const import (
@@ -231,11 +232,17 @@ class VictronNumber(NumberEntity):
             self.description.key,
         )
 
-        self._attr_unique_id = f"{self.description.slave}_{self.description.key}"
+        self._hub_id = coordinator.config_entry.entry_id
+        self._hub_name = coordinator.config_entry.title
+        hub_slug = slugify(self._hub_name)
+
+        self._attr_unique_id = (
+            f"{self._hub_id}_{self.description.slave}_{self.description.key}"
+        )
         if self.description.slave not in (100, 225):
-            self.entity_id = f"{NUMBER_DOMAIN}.{DOMAIN}_{self.description.key}_{self.description.slave}".lower()
+            self.entity_id = f"{NUMBER_DOMAIN}.{DOMAIN}_{hub_slug}_{self.description.key}_{self.description.slave}".lower()
         else:
-            self.entity_id = f"{NUMBER_DOMAIN}.{DOMAIN}_{self.description.key}".lower()
+            self.entity_id = f"{NUMBER_DOMAIN}.{DOMAIN}_{hub_slug}_{self.description.key}".lower()
 
         self._attr_mode = self.description.mode
 
@@ -308,8 +315,9 @@ class VictronNumber(NumberEntity):
     def device_info(self) -> entity.DeviceInfo:
         """Return the device info."""
         return entity.DeviceInfo(
-            identifiers={(DOMAIN, self.unique_id.split("_")[0])},
-            name=self.unique_id.split("_")[1],
-            model=self.unique_id.split("_")[0],
+            identifiers={(DOMAIN, f"{self._hub_id}_{self.description.slave}")},
+            name=f"{self._hub_name} {self.description.slave}",
+            model=str(self.description.slave),
             manufacturer="victron",
+            via_device=(DOMAIN, self._hub_id),
         )

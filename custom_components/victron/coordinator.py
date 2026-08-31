@@ -13,6 +13,7 @@ if "3.7.0" <= pymodbus.__version__ <= "3.7.4":
 else:
     from pymodbus.pdu.register_message import ReadHoldingRegistersResponse
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -38,10 +39,12 @@ class victronEnergyDeviceUpdateCoordinator(DataUpdateCoordinator):
     """Gather data for the energy device."""
 
     api: VictronHub
+    config_entry: ConfigEntry
 
     def __init__(
         self,
         hass: HomeAssistant,
+        config_entry: ConfigEntry,
         host: str,
         port: str,
         decodeInfo: OrderedDict,
@@ -50,8 +53,13 @@ class victronEnergyDeviceUpdateCoordinator(DataUpdateCoordinator):
         """Initialize Update Coordinator."""
 
         super().__init__(
-            hass, _LOGGER, name=DOMAIN, update_interval=timedelta(seconds=interval)
+            hass,
+            _LOGGER,
+            config_entry=config_entry,
+            name=f"{DOMAIN} ({config_entry.title})",
+            update_interval=timedelta(seconds=interval),
         )
+        self.config_entry = config_entry
         self.api = VictronHub(host, port)
         self.api.connect()
         self.decodeInfo = decodeInfo

@@ -88,7 +88,7 @@ class VictronFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for victron."""
 
     _LOGGER = logging.getLogger(__name__)
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self):
         """Initialize the config flow."""
@@ -113,6 +113,30 @@ class VictronFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_show_form(
                 step_id="user", data_schema=STEP_USER_DATA_SCHEMA
             )
+
+        errors = {}
+        already_configured = False
+
+        user_input[CONF_INTERVAL] = max(user_input[CONF_INTERVAL], 1)
+
+        # Unique ID must identify the physical GX device (host:port), not the
+        # integration as a whole, otherwise a second hub always aborts as
+        # "already configured". This check must run before branching to the
+        # advanced-options step so that path is protected too.
+        try:
+            await self.async_set_unique_id(
+                f"{user_input[CONF_HOST]}:{user_input[CONF_PORT]}"
+            )
+            self._abort_if_unique_id_configured()
+        except HomeAssistantError as e:
+            errors["base"] = f"already_configured: {e!s}"
+            already_configured = True
+
+        if already_configured:
+            return self.async_show_form(
+                step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+            )
+
         if user_input[CONF_ADVANCED_OPTIONS]:
             _LOGGER.debug("configuring advanced options")
             self.host = user_input[CONF_HOST]
@@ -121,40 +145,22 @@ class VictronFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             self.advanced_options = user_input[CONF_ADVANCED_OPTIONS]
             return await self.async_step_advanced()
 
-        errors = {}
-        already_configured = False
-
-        user_input[CONF_INTERVAL] = max(user_input[CONF_INTERVAL], 1)
-
         try:
-            # not yet working
-            await self.async_set_unique_id("victron")
-            self._abort_if_unique_id_configured()
-        except HomeAssistantError as e:
-            errors["base"] = f"already_configured: {e!s}"
-            already_configured = True
+            info = await validate_input(self.hass, user_input)
+        except CannotConnect:
+            errors["base"] = "cannot_connect"
+        except InvalidAuth:
+            errors["base"] = "invalid_auth"
+        except HomeAssistantError:
+            _LOGGER.exception("Unexpected exception:")
+            errors["base"] = "unknown"
 
-        if not already_configured:
-            try:
-                info = await validate_input(self.hass, user_input)
-            except CannotConnect:
-                errors["base"] = "cannot_connect"
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
-            except HomeAssistantError:
-                _LOGGER.exception("Unexpected exception:")
-                errors["base"] = "unknown"
-
-            # data property can't be changed in options flow if user wants to refresh
-            options = user_input
-            return self.async_create_entry(
-                title=info["title"],
-                data={SCAN_REGISTERS: info["data"]},
-                options=options,
-            )
-
-        return self.async_show_form(
-            step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+        # data property can't be changed in options flow if user wants to refresh
+        options = user_input
+        return self.async_create_entry(
+            title=user_input[CONF_HOST],
+            data={SCAN_REGISTERS: info["data"]},
+            options=options,
         )
 
     async def async_step_advanced(self, user_input=None):
@@ -188,7 +194,7 @@ class VictronFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "unknown"
                 _LOGGER.debug("setting up extra entry")
                 return self.async_create_entry(
-                    title=info["title"],
+                    title=self.host,
                     data={SCAN_REGISTERS: info["data"]},
                     options=options,
                 )
