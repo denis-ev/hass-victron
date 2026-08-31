@@ -61,9 +61,17 @@ class victronEnergyDeviceUpdateCoordinator(DataUpdateCoordinator):
         )
         self.config_entry = config_entry
         self.api = VictronHub(host, port)
-        self.api.connect()
         self.decodeInfo = decodeInfo
         self.interval = interval
+
+    async def async_setup(self) -> None:
+        """Open the Modbus TCP connection.
+
+        ModbusTcpClient.connect() is a blocking socket call; run it in the
+        executor instead of the event loop. Must be awaited by
+        async_setup_entry before any register reads are attempted.
+        """
+        await self.hass.async_add_executor_job(self.api.connect)
 
     # async def force_update_data(self) -> None:
     #     data = await self._async_update_data()
