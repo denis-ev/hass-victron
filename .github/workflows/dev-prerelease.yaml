@@ -18,6 +18,18 @@ jobs:
       - name: ⤵️ Checkout
         uses: actions/checkout@v4
 
+      - name: 🧹 Delete previous dev pre-releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release list --limit 100 --json tagName,isPrerelease \
+            --jq '.[] | select(.isPrerelease) | select(.tagName | startswith("v0.0.0-dev.")) | .tagName' \
+          | while read -r tag; do
+              echo "Deleting previous dev pre-release: ${tag}"
+              gh release delete "${tag}" --yes --cleanup-tag
+            done
+
       - name: 🔢 Determine pre-release version
         id: version
         run: |
