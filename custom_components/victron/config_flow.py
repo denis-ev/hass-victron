@@ -9,6 +9,7 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
@@ -44,6 +45,7 @@ CONF_RESCAN = "rescan"
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
+        vol.Optional(CONF_NAME): str,
         vol.Required(CONF_HOST): str,
         vol.Required(CONF_PORT, default=502): int,
         vol.Required(CONF_INTERVAL, default=30): int,
@@ -96,6 +98,7 @@ class VictronFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         self.interval = None
         self.port = None
         self.host = None
+        self.name = None
 
     @staticmethod
     @callback
@@ -137,6 +140,11 @@ class VictronFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
             )
 
+        # Let the user name the hub up front so it doesn't have to be
+        # renamed after the fact; falls back to the host if left blank.
+        name = user_input.pop(CONF_NAME, None) or user_input[CONF_HOST]
+        self.name = name
+
         if user_input[CONF_ADVANCED_OPTIONS]:
             _LOGGER.debug("configuring advanced options")
             self.host = user_input[CONF_HOST]
@@ -158,7 +166,7 @@ class VictronFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         # data property can't be changed in options flow if user wants to refresh
         options = user_input
         return self.async_create_entry(
-            title=user_input[CONF_HOST],
+            title=name,
             data={SCAN_REGISTERS: info["data"]},
             options=options,
         )
@@ -194,7 +202,7 @@ class VictronFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "unknown"
                 _LOGGER.debug("setting up extra entry")
                 return self.async_create_entry(
-                    title=self.host,
+                    title=self.name or self.host,
                     data={SCAN_REGISTERS: info["data"]},
                     options=options,
                 )
