@@ -47,9 +47,14 @@ jobs:
           zip victron.zip ./* -x '.*'
 
       - name: 🔏 Sign release package
-        uses: sigstore/gh-action-sigstore-python@v3.0.0
+        uses: sigstore/gh-action-sigstore-python@v3.5.0
         with:
           inputs: ${{ github.workspace }}/custom_components/victron/victron.zip
+          # No release exists yet at this point in the job (we're on a push
+          # trigger, not a release trigger like build.yaml), so let the
+          # softprops step below attach the assets instead of having this
+          # action try to find/upload to a release itself.
+          release-signing-artifacts: false
 
       - name: 🚧 Create pre-release
         uses: softprops/action-gh-release@v3.0.3
@@ -59,6 +64,8 @@ jobs:
           target_commitish: ${{ github.sha }}
           prerelease: true
           generate_release_notes: true
-          files: ${{ github.workspace }}/custom_components/victron/victron.zip
+          files: |
+            ${{ github.workspace }}/custom_components/victron/victron.zip
+            ${{ github.workspace }}/custom_components/victron/victron.zip.sigstore.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
