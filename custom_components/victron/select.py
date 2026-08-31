@@ -160,7 +160,7 @@ class VictronSelect(CoordinatorEntity, SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
-        self.coordinator.write_register(
+        await self.coordinator.write_register(
             unit=self.description.slave,
             address=self.description.address,
             value=self.coordinator.encode_scaling(

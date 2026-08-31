@@ -111,14 +111,14 @@ class VictronSwitch(CoordinatorEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the device."""
-        self.coordinator.write_register(
+        await self.coordinator.write_register(
             unit=self.description.slave, address=self.description.address, value=1
         )
         await self.coordinator.async_update_local_entry(self.data_key, 1)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the device."""
-        self.coordinator.write_register(
+        await self.coordinator.write_register(
             unit=self.description.slave, address=self.description.address, value=0
         )
         await self.coordinator.async_update_local_entry(self.data_key, 0)

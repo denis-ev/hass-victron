@@ -58,32 +58,33 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     """Validate the user input allows us to connect.
 
     Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
+
+    Deliberately does not catch connection/scan failures here: hub.connect()
+    and hub.determine_present_devices() are blocking calls run in the
+    executor, and letting exceptions propagate lets the caller's existing
+    CannotConnect/InvalidAuth/HomeAssistantError handling actually work,
+    instead of silently swallowing the error and returning a payload built
+    from a discovered_devices that was never assigned.
     """
-    # TODO validate the data can be used to set up a connection.
-
-    # If your PyPI package is not built with async, pass your methods
-    # to the executor:
-    # await hass.async_add_executor_job(
-    #     your_validate_func, data["username"], data["password"]
-    # )
-
     _LOGGER.debug("host = %s", data[CONF_HOST])
     _LOGGER.debug("port = %s", data[CONF_PORT])
     hub = VictronHub(data[CONF_HOST], data[CONF_PORT])
 
-    try:
-        hub.connect()
-        _LOGGER.debug("connection was succesfull")
-        discovered_devices = await scan_connected_devices(hub=hub)
-        _LOGGER.debug("successfully discovered devices")
-    except HomeAssistantError:
-        _LOGGER.error("Failed to connect to the victron device:")
+    await hass.async_add_executor_job(hub.connect)
+    _LOGGER.debug("connection was succesfull")
+    discovered_devices = await scan_connected_devices(hass, hub)
+    _LOGGER.debug("successfully discovered devices")
     return {"title": DOMAIN, "data": discovered_devices}
 
 
-async def scan_connected_devices(hub: VictronHub) -> list:
-    """Scan for connected devices."""
-    return hub.determine_present_devices()
+async def scan_connected_devices(hass: HomeAssistant, hub: VictronHub) -> list:
+    """Scan for connected devices.
+
+    hub.determine_present_devices() walks every unit id x every register
+    block (the README's own "relatively slow" discovery scan); run it in
+    the executor instead of blocking the event loop for its full duration.
+    """
+    return await hass.async_add_executor_job(hub.determine_present_devices)
 
 
 class VictronFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
@@ -163,6 +164,11 @@ class VictronFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             _LOGGER.exception("Unexpected exception:")
             errors["base"] = "unknown"
 
+        if errors:
+            return self.async_show_form(
+                step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+            )
+
         # data property can't be changed in options flow if user wants to refresh
         options = user_input
         return self.async_create_entry(
@@ -200,12 +206,16 @@ class VictronFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 except HomeAssistantError:
                     _LOGGER.exception("Unexpected exception")
                     errors["base"] = "unknown"
-                _LOGGER.debug("setting up extra entry")
-                return self.async_create_entry(
-                    title=self.name or self.host,
-                    data={SCAN_REGISTERS: info["data"]},
-                    options=options,
-                )
+
+                if not errors:
+                    _LOGGER.debug("setting up extra entry")
+                    return self.async_create_entry(
+                        title=self.name or self.host,
+                        data={SCAN_REGISTERS: info["data"]},
+                        options=options,
+                    )
+                # fall through to re-show this form with errors instead of
+                # creating an entry from a failed/incomplete validation
 
         return self.async_show_form(
             step_id="advanced",
@@ -264,7 +274,7 @@ class VictronFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 hub = VictronHub(user_input[CONF_HOST], user_input[CONF_PORT])
-                hub.connect()
+                await self.hass.async_add_executor_job(hub.connect)
                 _LOGGER.info("connection was succesfull")
             except HomeAssistantError as e:
                 errors["base"] = f"cannot_connect ({e!s})"

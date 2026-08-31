@@ -85,19 +85,29 @@ class VictronHub:
         return None
 
     def write_register(self, unit, address, value):
-        """Write a register."""
+        """Write a register.
+
+        Guarded by self._lock: reads and writes both run on executor threads
+        (via hass.async_add_executor_job) and share one ModbusTcpClient
+        socket, which is not safe for concurrent request/response pairs.
+        """
         slave = int(unit) if unit else 1
-        return self._client.write_register(
-            address=address, value=value, device_id=slave
-        )
+        with self._lock:
+            return self._client.write_register(
+                address=address, value=value, device_id=slave
+            )
 
     def read_holding_registers(self, unit, address, count):
-        """Read holding registers."""
+        """Read holding registers.
+
+        See write_register's docstring for why this is lock-guarded.
+        """
         slave = int(unit) if unit else 1
         _LOGGER.debug("Reading unit %s address %s count %s", unit, address, count)
-        return self._client.read_holding_registers(
-            address=address, count=count, device_id=slave
-        )
+        with self._lock:
+            return self._client.read_holding_registers(
+                address=address, count=count, device_id=slave
+            )
 
     def calculate_register_count(self, registerInfoDict: OrderedDict):
         """Calculate the number of registers to read."""

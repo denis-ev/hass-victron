@@ -203,15 +203,15 @@ class victronEnergyDeviceUpdateCoordinator(DataUpdateCoordinator):
         except HomeAssistantError as e:
             raise UpdateFailed("Fetching registers failed") from e
 
-    def write_register(self, unit, address, value):
-        """Write to the register."""
-        # try:
+    async def write_register(self, unit, address, value):
+        """Write to the register.
 
-        self.api_write(unit, address, value)
-
-    # except HomeAssistantError as e:
-    # TODO raise specific write error
-    # _LOGGER.error("failed to write to option:", e
+        api_write() -> self.api.write_register() is a blocking Modbus
+        socket call; run it in the executor instead of the event loop.
+        """
+        await self.hass.async_add_executor_job(
+            self.api_write, unit, address, value
+        )
 
     def api_write(self, unit, address, value):
         """Write to the api."""

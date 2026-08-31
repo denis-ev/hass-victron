@@ -268,7 +268,7 @@ class VictronNumber(NumberEntity):
         # TODO convert float to int again with scale respected
         if value < 0:
             value = UINT16_MAX + value
-        self.coordinator.write_register(
+        await self.coordinator.write_register(
             unit=self.description.slave,
             address=self.description.address,
             value=self.coordinator.encode_scaling(

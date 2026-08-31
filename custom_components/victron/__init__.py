@@ -16,8 +16,6 @@ from .hub import VictronHub
 
 _LOGGER = logging.getLogger(__name__)
 
-_LOGGER = logging.getLogger(__name__)
-
 PLATFORMS: list[Platform] = [
     Platform.SENSOR,
     Platform.SWITCH,

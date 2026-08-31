@@ -108,7 +108,7 @@ class VictronBinarySensor(CoordinatorEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle the button press."""
-        self.coordinator.write_register(
+        await self.coordinator.write_register(
             unit=self.description.slave, address=self.description.address, value=1
         )
 
