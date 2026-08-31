@@ -38,6 +38,9 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         config_entry.data[SCAN_REGISTERS],
         config_entry.options[CONF_INTERVAL],
     )
+    # Blocking socket connect must not run on the event loop; see
+    # victronEnergyDeviceUpdateCoordinator.async_setup for details.
+    await coordinator.async_setup()
     # try:
     #     await coordinator.async_config_entry_first_refresh()
     # except ConfigEntryNotReady:
