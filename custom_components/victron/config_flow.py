@@ -411,7 +411,7 @@ class VictronOptionFlowHandler(config_entries.OptionsFlow):
         if user_input[CONF_RESCAN]:
             info = await validate_input(self.hass, config)
             self.hass.config_entries.async_update_entry(
-                self.config_entry, data={SCAN_REGISTERS: info["data"]}, title=""
+                self.config_entry, data={SCAN_REGISTERS: info["data"]}
             )
 
         user_input.pop(CONF_RESCAN, None)
@@ -420,7 +420,7 @@ class VictronOptionFlowHandler(config_entries.OptionsFlow):
 
         if user_input[CONF_ADVANCED_OPTIONS]:
             self.hass.config_entries.async_update_entry(
-                self.config_entry, options=combined_config, title=""
+                self.config_entry, options=combined_config
             )
             _LOGGER.debug("returning step init because advanced options were selected")
             errors = {}
@@ -435,7 +435,7 @@ class VictronOptionFlowHandler(config_entries.OptionsFlow):
         if user_input[CONF_RESCAN]:
             info = await validate_input(self.hass, config)
             self.hass.config_entries.async_update_entry(
-                self.config_entry, data={SCAN_REGISTERS: info["data"]}, title=""
+                self.config_entry, data={SCAN_REGISTERS: info["data"]}
             )
 
         user_input.pop(CONF_RESCAN, None)
@@ -445,7 +445,7 @@ class VictronOptionFlowHandler(config_entries.OptionsFlow):
 
         if not user_input[CONF_ADVANCED_OPTIONS]:
             self.hass.config_entries.async_update_entry(
-                self.config_entry, options=combined_config, title=""
+                self.config_entry, options=combined_config
             )
             _LOGGER.debug("returning step init because advanced options were selected")
             errors = {}
@@ -481,7 +481,7 @@ class VictronOptionFlowHandler(config_entries.OptionsFlow):
 
             if user_input[CONF_RESCAN]:
                 self.hass.config_entries.async_update_entry(
-                    self.config_entry, data={SCAN_REGISTERS: info["data"]}, title=""
+                    self.config_entry, data={SCAN_REGISTERS: info["data"]}
                 )
             # return self.async_create_entry(title="", data={})
 
