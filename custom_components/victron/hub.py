@@ -4,6 +4,7 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 import threading
+import time
 
 from packaging import version
 import pymodbus
@@ -36,7 +37,21 @@ _LOGGER = logging.getLogger(__name__)
 # Modbus TCP daemon's concurrent-connection headroom isn't documented,
 # and this only runs for the (infrequent) discovery scan, not the
 # regular polling coordinator.
-SCAN_CONCURRENCY = 4
+#
+# Lowered from 4 to 2 after a real-world report of a unit going missing
+# from scan results (a second MPPT's battery voltage/current/temperature
+# entities) - almost certainly the device refusing a connection past its
+# own concurrent-connection limit, which _scan_unit previously treated as
+# "unit not present" instead of "connection contention, try again".
+SCAN_CONCURRENCY = 2
+
+# How many times _scan_unit retries an initial connection failure before
+# giving up on a unit id. A failed connect() during a concurrent scan is
+# more likely to be "the device's connection slots are all busy right
+# now" than "nothing is listening" - retrying with a short backoff lets
+# another worker's connection free up first.
+SCAN_CONNECT_RETRIES = 3
+SCAN_CONNECT_RETRY_DELAY = 1.0  # seconds
 
 
 class VictronHub:
@@ -196,8 +211,28 @@ class VictronHub:
         hub = VictronHub(self.host, self.port, timeout=self.timeout)
         working_registers = []
         try:
-            if not hub.connect():
-                _LOGGER.debug("Scan connection failed for unit %s", unit)
+            connected = False
+            for attempt in range(SCAN_CONNECT_RETRIES):
+                if hub.connect():
+                    connected = True
+                    break
+                _LOGGER.debug(
+                    "Scan connection attempt %s/%s failed for unit %s, "
+                    "retrying (likely connection-slot contention with "
+                    "another concurrent scan worker)",
+                    attempt + 1,
+                    SCAN_CONNECT_RETRIES,
+                    unit,
+                )
+                time.sleep(SCAN_CONNECT_RETRY_DELAY)
+            if not connected:
+                _LOGGER.warning(
+                    "Scan connection failed for unit %s after %s attempts; "
+                    "this unit will be reported as not present, which may "
+                    "be wrong if it's actually just unreachable/busy",
+                    unit,
+                    SCAN_CONNECT_RETRIES,
+                )
                 return working_registers
 
             for key, register_definition in register_info_dict.items():
