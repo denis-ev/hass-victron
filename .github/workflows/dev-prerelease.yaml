@@ -19,15 +19,20 @@ jobs:
       - name: ⤵️ Checkout
         uses: actions/checkout@v7.0.1
 
-      - name: 🧹 Delete previous dev pre-releases
+      - name: 🧹 Keep only the last 5 dev pre-releases
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release list --limit 100 --json tagName,isPrerelease \
-            --jq '.[] | select(.isPrerelease) | select(.tagName | startswith("v0.0.0-dev.")) | .tagName' \
+          # Keep the 4 most recent existing dev pre-releases so that,
+          # together with the one this run is about to create, there are
+          # 5 in total. Explicitly sorts by publishedAt (newest first)
+          # rather than relying on gh's default ordering.
+          gh release list --limit 100 --json tagName,isPrerelease,publishedAt \
+            --jq '[.[] | select(.isPrerelease) | select(.tagName | startswith("v0.0.0-dev."))]
+                  | sort_by(.publishedAt) | reverse | .[4:] | .[].tagName' \
           | while read -r tag; do
-              echo "Deleting previous dev pre-release: ${tag}"
+              echo "Deleting old dev pre-release (beyond the 5 most recent): ${tag}"
               gh release delete "${tag}" --yes --cleanup-tag
             done
 
