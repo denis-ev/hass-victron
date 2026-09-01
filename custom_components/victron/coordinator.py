@@ -49,6 +49,7 @@ class victronEnergyDeviceUpdateCoordinator(DataUpdateCoordinator):
         port: str,
         decodeInfo: OrderedDict,
         interval: int,
+        timeout: float | None = None,
     ) -> None:
         """Initialize Update Coordinator."""
 
@@ -60,7 +61,7 @@ class victronEnergyDeviceUpdateCoordinator(DataUpdateCoordinator):
             update_interval=timedelta(seconds=interval),
         )
         self.config_entry = config_entry
-        self.api = VictronHub(host, port)
+        self.api = VictronHub(host, port, timeout=timeout)
         self.decodeInfo = decodeInfo
         self.interval = interval
 

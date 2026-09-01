@@ -30,8 +30,10 @@ from .const import (
     CONF_INTERVAL,
     CONF_NUMBER_OF_PHASES,
     CONF_PORT,
+    CONF_TIMEOUT,
     CONF_USE_SLIDERS,
     DC_VOLTAGES,
+    DEFAULT_TIMEOUT,
     DOMAIN,
     PHASE_CONFIGURATIONS,
     SCAN_REGISTERS,
@@ -49,6 +51,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_HOST): str,
         vol.Required(CONF_PORT, default=502): int,
         vol.Required(CONF_INTERVAL, default=30): int,
+        vol.Optional(CONF_TIMEOUT, default=DEFAULT_TIMEOUT): int,
         vol.Optional(CONF_ADVANCED_OPTIONS, default=False): bool,
     }
 )
@@ -68,7 +71,11 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     """
     _LOGGER.debug("host = %s", data[CONF_HOST])
     _LOGGER.debug("port = %s", data[CONF_PORT])
-    hub = VictronHub(data[CONF_HOST], data[CONF_PORT])
+    hub = VictronHub(
+        data[CONF_HOST],
+        data[CONF_PORT],
+        timeout=data.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
+    )
 
     await hass.async_add_executor_job(hub.connect)
     _LOGGER.debug("connection was succesfull")
@@ -100,6 +107,7 @@ class VictronFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         self.port = None
         self.host = None
         self.name = None
+        self.timeout = None
 
     @staticmethod
     @callback
@@ -151,6 +159,7 @@ class VictronFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             self.host = user_input[CONF_HOST]
             self.port = user_input[CONF_PORT]
             self.interval = user_input[CONF_INTERVAL]
+            self.timeout = user_input.get(CONF_TIMEOUT, DEFAULT_TIMEOUT)
             self.advanced_options = user_input[CONF_ADVANCED_OPTIONS]
             return await self.async_step_advanced()
 
@@ -187,6 +196,7 @@ class VictronFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 options[CONF_HOST] = self.host
                 options[CONF_PORT] = self.port
                 options[CONF_INTERVAL] = self.interval
+                options[CONF_TIMEOUT] = self.timeout
                 options[CONF_ADVANCED_OPTIONS] = bool(self.advanced_options)
                 options[CONF_NUMBER_OF_PHASES] = int(user_input[CONF_NUMBER_OF_PHASES])
                 options[CONF_USE_SLIDERS] = bool(user_input[CONF_USE_SLIDERS])
@@ -273,7 +283,11 @@ class VictronFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
-                hub = VictronHub(user_input[CONF_HOST], user_input[CONF_PORT])
+                hub = VictronHub(
+                    user_input[CONF_HOST],
+                    user_input[CONF_PORT],
+                    timeout=user_input.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
+                )
                 await self.hass.async_add_executor_job(hub.connect)
                 _LOGGER.info("connection was succesfull")
             except HomeAssistantError as e:
@@ -283,6 +297,7 @@ class VictronFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 new_options = config_entry.options | {
                     CONF_HOST: user_input[CONF_HOST],
                     CONF_PORT: user_input[CONF_PORT],
+                    CONF_TIMEOUT: user_input.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
                 }
                 return self.async_update_reload_and_abort(
                     config_entry,
@@ -300,6 +315,12 @@ class VictronFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     ): str,
                     vol.Required(
                         CONF_PORT, default=config_entry.options[CONF_PORT]
+                    ): int,
+                    vol.Optional(
+                        CONF_TIMEOUT,
+                        default=config_entry.options.get(
+                            CONF_TIMEOUT, DEFAULT_TIMEOUT
+                        ),
                     ): int,
                 }
             ),
@@ -435,6 +456,12 @@ class VictronOptionFlowHandler(config_entries.OptionsFlow):
                     vol.Required(
                         CONF_INTERVAL, default=self.config_entry.options[CONF_INTERVAL]
                     ): vol.All(vol.Coerce(int)),
+                    vol.Optional(
+                        CONF_TIMEOUT,
+                        default=self.config_entry.options.get(
+                            CONF_TIMEOUT, DEFAULT_TIMEOUT
+                        ),
+                    ): vol.All(vol.Coerce(int)),
                     vol.Optional(CONF_RESCAN, default=False): bool,
                     vol.Optional(CONF_ADVANCED_OPTIONS, default=False): bool,
                 },
@@ -461,6 +488,12 @@ class VictronOptionFlowHandler(config_entries.OptionsFlow):
                 {
                     vol.Required(
                         CONF_INTERVAL, default=self.config_entry.options[CONF_INTERVAL]
+                    ): vol.All(vol.Coerce(int)),
+                    vol.Optional(
+                        CONF_TIMEOUT,
+                        default=self.config_entry.options.get(
+                            CONF_TIMEOUT, DEFAULT_TIMEOUT
+                        ),
                     ): vol.All(vol.Coerce(int)),
                     vol.Required(
                         CONF_AC_SYSTEM_VOLTAGE, default=str(system_ac_voltage_default)

@@ -1,6 +1,7 @@
 """Support for Victron Energy devices."""
 
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 import threading
 
@@ -25,15 +26,35 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Discovery scan concurrency: valid_unit_ids has 150+ candidate ids and
+# register_info_dict has ~75 register blocks, so a fully sequential scan
+# (the previous behaviour) can take a very long time, especially for
+# unit ids that don't respond at all and eat the full per-request timeout
+# on every attempt. Probing several unit ids at once (each on its own
+# short-lived connection) cuts wall-clock scan time roughly by this
+# factor. Kept conservative and not user-configurable: the Venus OS
+# Modbus TCP daemon's concurrent-connection headroom isn't documented,
+# and this only runs for the (infrequent) discovery scan, not the
+# regular polling coordinator.
+SCAN_CONCURRENCY = 4
+
 
 class VictronHub:
     """Victron Hub."""
 
-    def __init__(self, host: str, port: int) -> None:
-        """Initialize."""
+    def __init__(self, host: str, port: int, timeout: float | None = None) -> None:
+        """Initialize.
+
+        timeout is the pymodbus per-request timeout in seconds; None uses
+        pymodbus's own ModbusTcpClient default.
+        """
         self.host = host
         self.port = port
-        self._client = ModbusTcpClient(host=self.host, port=self.port)
+        self.timeout = timeout
+        client_kwargs = {"host": self.host, "port": self.port}
+        if timeout is not None:
+            client_kwargs["timeout"] = timeout
+        self._client = ModbusTcpClient(**client_kwargs)
         self._lock = threading.Lock()
 
     def is_still_connected(self):
@@ -131,13 +152,54 @@ class VictronHub:
         return registerInfoDict[first_register].register
 
     def determine_present_devices(self):
-        """Determine which devices are present."""
-        valid_devices = {}
+        """Determine which devices are present.
 
+        Probes are spread across up to SCAN_CONCURRENCY unit ids at a time
+        (each on its own short-lived connection via _scan_unit) instead of
+        one long sequential loop; see SCAN_CONCURRENCY's comment for why.
+        This method itself still blocks the calling thread until every
+        unit id has been probed - callers already run it in the executor
+        (config_flow.validate_input) so that's fine.
+        """
         _LOGGER.debug("Determining present devices")
 
-        for unit in valid_unit_ids:
-            working_registers = []
+        valid_devices = {}
+        max_workers = min(SCAN_CONCURRENCY, len(valid_unit_ids)) or 1
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_unit = {
+                executor.submit(self._scan_unit, unit): unit
+                for unit in valid_unit_ids
+            }
+            for future in as_completed(future_to_unit):
+                unit = future_to_unit[future]
+                try:
+                    working_registers = future.result()
+                except Exception:  # noqa: BLE001 - one unit's failure must not abort the rest of the scan
+                    _LOGGER.exception("Scan of unit %s failed", unit)
+                    continue
+
+                if working_registers:
+                    valid_devices[unit] = working_registers
+                else:
+                    _LOGGER.debug("no registers found for unit: %s", unit)
+
+        return valid_devices
+
+    def _scan_unit(self, unit) -> list:
+        """Probe every register block for a single unit id on its own connection.
+
+        Runs on a worker thread from determine_present_devices's thread
+        pool. Uses a dedicated VictronHub/connection rather than self so
+        multiple units can be probed concurrently without serializing on
+        self._lock, which would defeat the point of parallelizing.
+        """
+        hub = VictronHub(self.host, self.port, timeout=self.timeout)
+        working_registers = []
+        try:
+            if not hub.connect():
+                _LOGGER.debug("Scan connection failed for unit %s", unit)
+                return working_registers
+
             for key, register_definition in register_info_dict.items():
                 _LOGGER.debug("Checking unit %s for register set %s", unit, key)
                 # VE.CAN device zero is present under unit 100. This seperates non system / settings entities into the seperate can device
@@ -145,7 +207,9 @@ class VictronHub:
                     continue
 
                 try:
-                    status = self._probe_block_supported(unit, register_definition)
+                    status = hub._probe_block_supported(  # noqa: SLF001 - same class, dedicated scan connection
+                        unit, register_definition
+                    )
                 except HomeAssistantError as e:
                     _LOGGER.error(e)
                     continue
@@ -166,13 +230,10 @@ class VictronHub:
                         key,
                         unit,
                     )
+        finally:
+            hub.disconnect()
 
-            if len(working_registers) > 0:
-                valid_devices[unit] = working_registers
-            else:
-                _LOGGER.debug("no registers found for unit: %s", unit)
-
-        return valid_devices
+        return working_registers
 
     def _probe_block_supported(
         self, unit, register_definition: OrderedDict, attempts: int = 3

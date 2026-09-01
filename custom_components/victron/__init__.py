@@ -10,7 +10,15 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
-from .const import CONF_HOST, CONF_INTERVAL, CONF_PORT, DOMAIN, SCAN_REGISTERS
+from .const import (
+    CONF_HOST,
+    CONF_INTERVAL,
+    CONF_PORT,
+    CONF_TIMEOUT,
+    DEFAULT_TIMEOUT,
+    DOMAIN,
+    SCAN_REGISTERS,
+)
 from .coordinator import victronEnergyDeviceUpdateCoordinator as Coordinator
 from .hub import VictronHub
 
@@ -52,7 +60,9 @@ async def _revalidate_stored_registers(
 
     try:
         hub = VictronHub(
-            config_entry.options[CONF_HOST], config_entry.options[CONF_PORT]
+            config_entry.options[CONF_HOST],
+            config_entry.options[CONF_PORT],
+            timeout=config_entry.options.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
         )
         try:
             connected = await hass.async_add_executor_job(hub.connect)
@@ -100,6 +110,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         config_entry.options[CONF_PORT],
         config_entry.data[SCAN_REGISTERS],
         config_entry.options[CONF_INTERVAL],
+        timeout=config_entry.options.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
     )
     # Blocking socket connect must not run on the event loop; see
     # victronEnergyDeviceUpdateCoordinator.async_setup for details.
