@@ -64,6 +64,12 @@ class victronEnergyDeviceUpdateCoordinator(DataUpdateCoordinator):
         self.api = VictronHub(host, port, timeout=timeout)
         self.decodeInfo = decodeInfo
         self.interval = interval
+        # (unit, register_set_name) pairs currently failing to respond.
+        # Used to log the "no valid data" warning only on transition to
+        # and from unavailable instead of every poll cycle forever - see
+        # field report F7: a permanently-missing unit turned this into
+        # the only thing in the log, every 30s, indefinitely.
+        self._unavailable_register_sets: set = set()
 
     async def async_setup(self) -> None:
         """Open the Modbus TCP connection.
@@ -95,6 +101,7 @@ class victronEnergyDeviceUpdateCoordinator(DataUpdateCoordinator):
             for name in registerInfo:
                 data = await self.fetch_registers(unit, register_info_dict[name])
                 # TODO safety check if result is actual data if not unavailable
+                transition_key = (unit, name)
                 if data.isError():
                     # raise error
                     # TODO change this to work with partial updates
@@ -103,11 +110,20 @@ class victronEnergyDeviceUpdateCoordinator(DataUpdateCoordinator):
                         # self.data["data"][full_key] = None
                         unavailable_entities[full_key] = False
 
-                    _LOGGER.warning(
-                        "No valid data returned for entities of slave: %s (if the device continues to no longer update) check if the device was physically removed. Before opening an issue please force a rescan to attempt to resolve this issue",
-                        unit,
-                    )
+                    if transition_key not in self._unavailable_register_sets:
+                        self._unavailable_register_sets.add(transition_key)
+                        _LOGGER.warning(
+                            "No valid data returned for entities of slave: %s (if the device continues to no longer update) check if the device was physically removed. Before opening an issue please force a rescan to attempt to resolve this issue",
+                            unit,
+                        )
                 else:
+                    if transition_key in self._unavailable_register_sets:
+                        self._unavailable_register_sets.discard(transition_key)
+                        _LOGGER.info(
+                            "Slave %s register set %s is responding again",
+                            unit,
+                            name,
+                        )
                     parsed_data = OrderedDict(
                         list(parsed_data.items())
                         + list(

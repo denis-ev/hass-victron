@@ -29,7 +29,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
 
-from .base import VictronBaseEntityDescription
+from .base import VictronBaseEntityDescription, strip_domain_prefix
 from .const import (
     CONF_ADVANCED_OPTIONS,
     DOMAIN,
@@ -158,7 +158,7 @@ class VictronSensor(CoordinatorEntity, SensorEntity):
 
         self._hub_id = coordinator.config_entry.entry_id
         self._hub_name = coordinator.config_entry.title
-        hub_slug = slugify(self._hub_name)
+        hub_slug = strip_domain_prefix(slugify(self._hub_name))
 
         self._attr_unique_id = (
             f"{self._hub_id}_{description.slave}_{self.description.key}"
