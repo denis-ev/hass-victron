@@ -234,6 +234,17 @@ class VictronHub:
         answered - do the remaining not-yet-successful blocks get the
         full multi-attempt consensus retry, since a real unit's
         per-block failure is worth treating as possibly transient.
+
+        WAN-deployed GX devices (a real-world caveat raised against the
+        first version of this two-pass design) can hit a connection-level
+        blip spanning this unit's entire first pass, making a genuinely
+        present unit fail every single first-pass probe - a same-
+        connection retry wouldn't catch that if the connection itself was
+        the problem. So if pass one comes back completely empty, this
+        reconnects fresh and tries once more against a single register
+        before concluding absence: one extra probe per genuinely-absent
+        unit is negligible against the thousands saved, and it restores
+        tolerance for a transient that spans the whole first pass.
         """
         hub = VictronHub(self.host, self.port, timeout=self.timeout)
         working_registers = []
@@ -262,11 +273,32 @@ class VictronHub:
                 else:
                     pending_blocks.append((key, register_definition))
 
+            if not working_registers and pending_blocks:
+                hub.disconnect()
+                if hub.connect():
+                    recheck_key, recheck_definition = pending_blocks[0]
+                    try:
+                        status = hub._probe_block_supported(  # noqa: SLF001 - same class, dedicated scan connection
+                            unit, recheck_definition, attempts=1
+                        )
+                    except HomeAssistantError as e:
+                        _LOGGER.error(e)
+                        status = None
+                    if status is True:
+                        working_registers.append(recheck_key)
+                        pending_blocks = pending_blocks[1:]
+                        _LOGGER.debug(
+                            "Unit %s answered on a reconnect-and-retry after "
+                            "failing every block on the first pass; "
+                            "treating as present",
+                            unit,
+                        )
+
             if not working_registers:
                 _LOGGER.debug(
                     "Unit %s did not respond to any of %s register blocks "
-                    "on the first pass; treating as not present instead of "
-                    "retrying every block",
+                    "on the first pass or a reconnect retry; treating as "
+                    "not present instead of retrying every block",
                     unit,
                     len(pending_blocks),
                 )

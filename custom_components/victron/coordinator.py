@@ -64,12 +64,19 @@ class victronEnergyDeviceUpdateCoordinator(DataUpdateCoordinator):
         self.api = VictronHub(host, port, timeout=timeout)
         self.decodeInfo = decodeInfo
         self.interval = interval
-        # (unit, register_set_name) pairs currently failing to respond.
-        # Used to log the "no valid data" warning only on transition to
-        # and from unavailable instead of every poll cycle forever - see
-        # field report F7: a permanently-missing unit turned this into
-        # the only thing in the log, every 30s, indefinitely.
-        self._unavailable_register_sets: set = set()
+        # Units currently considered fully unresponsive (every register
+        # set they have failed this poll, not just some of them). Used to
+        # log the "no valid data" warning once on transition to and from
+        # unavailable instead of every poll cycle forever - see field
+        # report F7: a permanently-missing unit turned this into the only
+        # thing in the log, every 30s, indefinitely. Tracked per-unit
+        # rather than per-(unit, register_set): a unit with several
+        # register sets going down together used to log up to ~75
+        # near-identical lines for what's really one event ("slave X is
+        # gone"), while entity-level availability (self.data["availability"])
+        # stays exactly as fine-grained as before - this only changes the
+        # warning's own granularity, not what entities report.
+        self._unavailable_units: set = set()
 
     async def async_setup(self) -> None:
         """Open the Modbus TCP connection.
@@ -98,32 +105,21 @@ class victronEnergyDeviceUpdateCoordinator(DataUpdateCoordinator):
             self.data = {"data": OrderedDict(), "availability": OrderedDict()}
 
         for unit, registerInfo in self.decodeInfo.items():
+            unit_had_success = False
+            unit_had_failure = False
             for name in registerInfo:
                 data = await self.fetch_registers(unit, register_info_dict[name])
                 # TODO safety check if result is actual data if not unavailable
-                transition_key = (unit, name)
                 if data.isError():
                     # raise error
                     # TODO change this to work with partial updates
+                    unit_had_failure = True
                     for key in register_info_dict[name]:
                         full_key = str(unit) + "." + key
                         # self.data["data"][full_key] = None
                         unavailable_entities[full_key] = False
-
-                    if transition_key not in self._unavailable_register_sets:
-                        self._unavailable_register_sets.add(transition_key)
-                        _LOGGER.warning(
-                            "No valid data returned for entities of slave: %s (if the device continues to no longer update) check if the device was physically removed. Before opening an issue please force a rescan to attempt to resolve this issue",
-                            unit,
-                        )
                 else:
-                    if transition_key in self._unavailable_register_sets:
-                        self._unavailable_register_sets.discard(transition_key)
-                        _LOGGER.info(
-                            "Slave %s register set %s is responding again",
-                            unit,
-                            name,
-                        )
+                    unit_had_success = True
                     parsed_data = OrderedDict(
                         list(parsed_data.items())
                         + list(
@@ -135,6 +131,22 @@ class victronEnergyDeviceUpdateCoordinator(DataUpdateCoordinator):
                     for key in register_info_dict[name]:
                         full_key = str(unit) + "." + key
                         unavailable_entities[full_key] = True
+
+            # Unit-level transition logging - see _unavailable_units's
+            # comment. Only warn when the unit had zero successes at all
+            # this cycle (fully down, matching the message's own "no
+            # valid data" wording); a partial failure (some register sets
+            # ok, some not) neither triggers nor clears this.
+            if unit_had_failure and not unit_had_success:
+                if unit not in self._unavailable_units:
+                    self._unavailable_units.add(unit)
+                    _LOGGER.warning(
+                        "No valid data returned for entities of slave: %s (if the device continues to no longer update) check if the device was physically removed. Before opening an issue please force a rescan to attempt to resolve this issue",
+                        unit,
+                    )
+            elif unit_had_success and unit in self._unavailable_units:
+                self._unavailable_units.discard(unit)
+                _LOGGER.info("Slave %s is responding again", unit)
 
         return {
             "register_set": self.decodeInfo,
