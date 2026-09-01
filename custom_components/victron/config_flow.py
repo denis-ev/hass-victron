@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -45,6 +46,15 @@ _LOGGER = logging.getLogger(__name__)
 
 CONF_RESCAN = "rescan"
 
+# How many extra async-level rounds scan_connected_devices spends
+# rechecking unit ids whose connection failed on a previous pass, and
+# how long to wait between rounds. Runs as await asyncio.sleep() between
+# hass.async_add_executor_job() calls - never blocks the event loop, and
+# never ties up a scan worker thread the way a blocking retry inside the
+# thread pool would (see hub.py's SCAN_CONCURRENCY comment).
+RECHECK_ROUNDS = 3
+RECHECK_DELAY = 2  # seconds
+
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_NAME): str,
@@ -84,14 +94,53 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     return {"title": DOMAIN, "data": discovered_devices}
 
 
-async def scan_connected_devices(hass: HomeAssistant, hub: VictronHub) -> list:
+async def scan_connected_devices(hass: HomeAssistant, hub: VictronHub) -> dict:
     """Scan for connected devices.
 
     hub.determine_present_devices() walks every unit id x every register
     block (the README's own "relatively slow" discovery scan); run it in
     the executor instead of blocking the event loop for its full duration.
+
+    Each unit id gets a single connection attempt per pass (see
+    hub._scan_unit's docstring for why no blocking retry happens there).
+    A unit whose connection fails outright is more likely hitting the
+    device's own connection-slot contention from running several scan
+    workers at once than to genuinely not exist, so unit ids that failed
+    to connect get up to RECHECK_ROUNDS more passes here at the async
+    layer, waiting RECHECK_DELAY between rounds via asyncio.sleep -
+    never blocking the event loop and never tying up a scan worker
+    thread the way retrying inside the thread pool would.
     """
-    return await hass.async_add_executor_job(hub.determine_present_devices)
+    valid_devices, failed_units = await hass.async_add_executor_job(
+        hub.determine_present_devices
+    )
+
+    for round_num in range(1, RECHECK_ROUNDS + 1):
+        if not failed_units:
+            break
+        _LOGGER.debug(
+            "Rechecking %s unit(s) that failed to connect (round %s/%s): %s",
+            len(failed_units),
+            round_num,
+            RECHECK_ROUNDS,
+            failed_units,
+        )
+        await asyncio.sleep(RECHECK_DELAY)
+        rechecked_devices, failed_units = await hass.async_add_executor_job(
+            hub.determine_present_devices, failed_units
+        )
+        valid_devices.update(rechecked_devices)
+
+    if failed_units:
+        _LOGGER.warning(
+            "Unit(s) %s still failed to connect after %s recheck round(s); "
+            "reporting as not present, which may be wrong if they're "
+            "actually just unreachable/busy",
+            failed_units,
+            RECHECK_ROUNDS,
+        )
+
+    return valid_devices
 
 
 class VictronFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):

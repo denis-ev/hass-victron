@@ -4,7 +4,6 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 import threading
-import time
 
 from packaging import version
 import pymodbus
@@ -38,20 +37,15 @@ _LOGGER = logging.getLogger(__name__)
 # and this only runs for the (infrequent) discovery scan, not the
 # regular polling coordinator.
 #
-# Lowered from 4 to 2 after a real-world report of a unit going missing
-# from scan results (a second MPPT's battery voltage/current/temperature
-# entities) - almost certainly the device refusing a connection past its
-# own concurrent-connection limit, which _scan_unit previously treated as
-# "unit not present" instead of "connection contention, try again".
+# A unit whose connection fails outright (as opposed to connecting fine
+# and simply having no matching registers) is more likely to be hitting
+# the device's own connection-slot contention from running several scan
+# workers at once than to genuinely not exist. Rather than block a
+# worker thread retrying with time.sleep() (which just ties up a
+# concurrency slot doing nothing), determine_present_devices() reports
+# those unit ids back to the caller so the recheck can happen at the
+# async layer instead - see scan_connected_devices() in config_flow.py.
 SCAN_CONCURRENCY = 2
-
-# How many times _scan_unit retries an initial connection failure before
-# giving up on a unit id. A failed connect() during a concurrent scan is
-# more likely to be "the device's connection slots are all busy right
-# now" than "nothing is listening" - retrying with a short backoff lets
-# another worker's connection free up first.
-SCAN_CONNECT_RETRIES = 3
-SCAN_CONNECT_RETRY_DELAY = 1.0  # seconds
 
 
 class VictronHub:
@@ -166,7 +160,7 @@ class VictronHub:
         first_register = next(iter(registerInfoDict))
         return registerInfoDict[first_register].register
 
-    def determine_present_devices(self):
+    def determine_present_devices(self, units=None):
         """Determine which devices are present.
 
         Probes are spread across up to SCAN_CONCURRENCY unit ids at a time
@@ -175,65 +169,66 @@ class VictronHub:
         This method itself still blocks the calling thread until every
         unit id has been probed - callers already run it in the executor
         (config_flow.validate_input) so that's fine.
+
+        units defaults to every valid_unit_ids candidate; pass a smaller
+        iterable to re-probe only specific unit ids (used by
+        scan_connected_devices's async recheck of units whose connection
+        failed on a previous pass).
+
+        Returns (valid_devices, failed_units): failed_units is every unit
+        id whose connection itself failed (as opposed to connecting fine
+        and finding no matching registers), so the caller can decide
+        whether to recheck them rather than conclude they're absent.
         """
         _LOGGER.debug("Determining present devices")
 
+        units = list(valid_unit_ids) if units is None else list(units)
         valid_devices = {}
-        max_workers = min(SCAN_CONCURRENCY, len(valid_unit_ids)) or 1
+        failed_units = []
+        max_workers = min(SCAN_CONCURRENCY, len(units)) or 1
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_unit = {
-                executor.submit(self._scan_unit, unit): unit
-                for unit in valid_unit_ids
+                executor.submit(self._scan_unit, unit): unit for unit in units
             }
             for future in as_completed(future_to_unit):
                 unit = future_to_unit[future]
                 try:
-                    working_registers = future.result()
+                    working_registers, connection_failed = future.result()
                 except Exception:  # noqa: BLE001 - one unit's failure must not abort the rest of the scan
                     _LOGGER.exception("Scan of unit %s failed", unit)
+                    failed_units.append(unit)
                     continue
 
-                if working_registers:
+                if connection_failed:
+                    failed_units.append(unit)
+                elif working_registers:
                     valid_devices[unit] = working_registers
                 else:
                     _LOGGER.debug("no registers found for unit: %s", unit)
 
-        return valid_devices
+        return valid_devices, failed_units
 
-    def _scan_unit(self, unit) -> list:
+    def _scan_unit(self, unit) -> tuple[list, bool]:
         """Probe every register block for a single unit id on its own connection.
 
         Runs on a worker thread from determine_present_devices's thread
         pool. Uses a dedicated VictronHub/connection rather than self so
         multiple units can be probed concurrently without serializing on
         self._lock, which would defeat the point of parallelizing.
+
+        Single connection attempt only - no blocking retry here, since
+        sleeping inside a thread pool worker just ties up a concurrency
+        slot. Returns (working_registers, connection_failed) so the
+        caller can distinguish "connection itself failed" from
+        "connected fine, nothing found" and decide whether a recheck
+        makes sense.
         """
         hub = VictronHub(self.host, self.port, timeout=self.timeout)
         working_registers = []
         try:
-            connected = False
-            for attempt in range(SCAN_CONNECT_RETRIES):
-                if hub.connect():
-                    connected = True
-                    break
-                _LOGGER.debug(
-                    "Scan connection attempt %s/%s failed for unit %s, "
-                    "retrying (likely connection-slot contention with "
-                    "another concurrent scan worker)",
-                    attempt + 1,
-                    SCAN_CONNECT_RETRIES,
-                    unit,
-                )
-                time.sleep(SCAN_CONNECT_RETRY_DELAY)
-            if not connected:
-                _LOGGER.warning(
-                    "Scan connection failed for unit %s after %s attempts; "
-                    "this unit will be reported as not present, which may "
-                    "be wrong if it's actually just unreachable/busy",
-                    unit,
-                    SCAN_CONNECT_RETRIES,
-                )
-                return working_registers
+            if not hub.connect():
+                _LOGGER.debug("Scan connection failed for unit %s", unit)
+                return working_registers, True
 
             for key, register_definition in register_info_dict.items():
                 _LOGGER.debug("Checking unit %s for register set %s", unit, key)
@@ -268,7 +263,7 @@ class VictronHub:
         finally:
             hub.disconnect()
 
-        return working_registers
+        return working_registers, False
 
     def _probe_block_supported(
         self, unit, register_definition: OrderedDict, attempts: int = 3
